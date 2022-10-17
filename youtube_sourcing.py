@@ -5,10 +5,13 @@ from bs4 import BeautifulSoup
 import time
 import pandas as pd
 import s3fs
-
 from constants import S3_BUCKET_NAME, AWS_KEY_ID, AWS_SECRET_KEY
 
-driver = wd.Chrome(executable_path="/Users/yelee/Desktop/CS4480/chromedriver")
+ops = wd.ChromeOptions()
+
+ops.add_extension("/Users/yelee/Desktop/CS4480/dislikes_extension.zip")
+
+driver = wd.Chrome(executable_path="/Users/yelee/Desktop/CS4480/chromedriver", chrome_options=ops)
 url = 'https://www.youtube.com/watch?v=35BkHichD2M'
 
 
@@ -45,12 +48,24 @@ def close_pop_up():
 
 
 def get_video_meta_data(element):
-    channel = element.find("link", itemprop="name")["content"]
-    title = element.find("meta", itemprop="name")["content"]
-    # description = element.find("meta", itemprop="description")["content"]
+    channel_id = element.find("meta", itemprop="channelId")["content"]
+    channel_name = element.find("link", itemprop="name")["content"]
+    video_id = element.find("meta", itemprop="videoId")["content"]
+    video_title = element.find("meta", itemprop="name")["content"]
+    description = element.find("meta", itemprop="description")["content"]
+    genre = element.find("meta", itemprop="genre")["content"]
     views = element.find("meta", itemprop="interactionCount")["content"]
+    likes_dislikes = element.find_all('yt-formatted-string',
+                                      {'id': 'text', 'class': 'style-scope ytd-toggle-button-renderer style-text'})
+
+    likes = likes_dislikes[0].string
+    dislikes = likes_dislikes[1].string
+
     published_date = element.find("meta", itemprop="datePublished")["content"]
-    return [channel, title, views, published_date]
+
+    return {"channel_id": channel_id, "channel_name": channel_name, "video_id": video_id,
+            "video_title": video_title, "video_description": description, "genre": genre, "views": views,
+            "likes": likes, "dislikes": dislikes, "published_date": published_date}
 
 
 def get_comments(element) -> Tuple[List, List]:
@@ -74,12 +89,12 @@ def get_comments(element) -> Tuple[List, List]:
     return id_final, comment_final
 
 
-def upload_file_using_client(df) -> None:
+def upload_file_using_client(df, file_name) -> None:
     bytes_to_write = df.to_csv(None).encode()
     fs = s3fs.S3FileSystem(key=AWS_KEY_ID, secret=AWS_SECRET_KEY)
     bucket_name = S3_BUCKET_NAME
 
-    with fs.open(f"s3://{bucket_name}/comments.csv", 'wb') as f:
+    with fs.open(f"s3://{bucket_name}/{file_name}.csv", 'wb') as f:
         f.write(bytes_to_write)
 
 
@@ -88,14 +103,14 @@ close_pop_up()
 
 soup = BeautifulSoup(html_source, 'html.parser')
 
-meta_data = get_video_meta_data(soup)
+video_meta_data = get_video_meta_data(soup)
 
-comments_tuple = get_comments(soup)
+comment_tuple = get_comments(soup)
 
-pd_data = {"channel_name": meta_data[0], "video_title": meta_data[1], "views": meta_data[2],
-           "published_date": meta_data[3],
-           "user_id": comments_tuple[0], "comments": comments_tuple[1]}
+comment_dict = {"channel_id": video_meta_data["channel_id"], "video_id": video_meta_data["video_id"],
+                "user_id": comment_tuple[0], "comments": comment_tuple[1]}
 
-youtube_pd = pd.DataFrame(pd_data)
-
-upload_file_using_client(youtube_pd)
+upload_file_using_client(pd.DataFrame([video_meta_data]),
+                         f"{video_meta_data['channel_id']}/{video_meta_data['video_id']}/videos")
+upload_file_using_client(pd.DataFrame([comment_dict]),
+                         f"{video_meta_data['channel_id']}/{video_meta_data['video_id']}/comments")
