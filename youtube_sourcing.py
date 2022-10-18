@@ -1,5 +1,5 @@
 from typing import List, Tuple
-
+from selenium.webdriver.common.keys import Keys
 from selenium import webdriver as wd
 from bs4 import BeautifulSoup
 import time
@@ -7,35 +7,34 @@ import pandas as pd
 import s3fs
 from constants import S3_BUCKET_NAME, AWS_KEY_ID, AWS_SECRET_KEY
 
-ops = wd.ChromeOptions()
+options = wd.ChromeOptions()
 
-ops.add_extension("/Users/yelee/Desktop/CS4480/dislikes_extension.zip")
+options.add_extension("/Users/yelee/Desktop/CS4480/dislikes_extension.zip")
+options.add_argument("--disable-blink-features=AutomationControlled")
+options.add_argument("--disable-web-security")
 
-driver = wd.Chrome(executable_path="/Users/yelee/Desktop/CS4480/chromedriver", chrome_options=ops)
-url = 'https://www.youtube.com/watch?v=35BkHichD2M'
-
+driver = wd.Chrome(executable_path="/Users/yelee/Desktop/CS4480/chromedriver", chrome_options=options)
+url = 'https://www.youtube.com/watch?v=ZqyAI1L_Seo'
+url_list = ["https://www.youtube.com/watch?v=35BkHichD2M", "https://www.youtube.com/watch?v=ZqyAI1L_Seo"]
 
 def get_html_source(driver, url: str):
     driver.implicitly_wait(3)
-
     driver.get(url)
 
-    time.sleep(1.5)
-
-    driver.execute_script("window.scrollTo(0, 800)")
     time.sleep(3)
-    last_height = driver.execute_script("return document.documentElement.scrollHeight")
+    # 스크롤 내리기
+    last_page_height = driver.execute_script("return document.documentElement.scrollHeight")
 
     while True:
         driver.execute_script("window.scrollTo(0, document.documentElement.scrollHeight);")
-        time.sleep(1.5)
-
-        new_height = driver.execute_script("return document.documentElement.scrollHeight")
-        if new_height == last_height:
-            break
-        last_height = new_height
-
-    time.sleep(1.5)
+        time.sleep(4.0)
+        new_page_height = driver.execute_script("return document.documentElement.scrollHeight")
+        if new_page_height == last_page_height:
+            time.sleep(4.0)
+            if new_page_height == driver.execute_script("return document.documentElement.scrollHeight"):
+                break
+        else:
+            last_page_height = new_page_height
 
     return driver.page_source
 
@@ -107,10 +106,18 @@ video_meta_data = get_video_meta_data(soup)
 
 comment_tuple = get_comments(soup)
 
-comment_dict = {"channel_id": video_meta_data["channel_id"], "video_id": video_meta_data["video_id"],
-                "user_id": comment_tuple[0], "comments": comment_tuple[1]}
+comment_dict = {"user_id": comment_tuple[0], "comments": comment_tuple[1]}
 
-upload_file_using_client(pd.DataFrame([video_meta_data]),
+# upload video info to s3
+video_df = pd.DataFrame(video_meta_data, index=[0])
+
+upload_file_using_client(video_df,
                          f"{video_meta_data['channel_id']}/{video_meta_data['video_id']}/videos")
-upload_file_using_client(pd.DataFrame([comment_dict]),
+
+# upload comments to s3
+comment_df = pd.DataFrame(comment_dict, index=[_ for _ in range(len(comment_tuple[0]))])
+comment_df["channel_id"] = video_meta_data["channel_id"]
+comment_df["video_id"] = video_meta_data["video_id"]
+
+upload_file_using_client(comment_df,
                          f"{video_meta_data['channel_id']}/{video_meta_data['video_id']}/comments")
